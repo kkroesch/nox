@@ -18,6 +18,13 @@ pub fn init_db() -> Result<()> {
         )",
         [],
     )?;
+
+    // Automatische Migration: Fügt die Spalte hinzu, ignoriert den Fehler, falls sie schon existiert
+    let _ = conn.execute(
+        "ALTER TABLE contacts ADD COLUMN is_hidden BOOLEAN DEFAULT 0",
+        [],
+    );
+
     Ok(())
 }
 
@@ -40,17 +47,20 @@ pub fn bulk_upsert(contacts: &HashMap<String, String>) -> Result<()> {
     Ok(())
 }
 
-// GEÄNDERT: Gibt jetzt auch is_verified zurück
-pub fn get_all_contacts() -> Result<Vec<(String, String, bool)>> {
+pub fn get_all_contacts() -> Result<Vec<(String, String, bool, bool)>> {
     let conn = Connection::open(db_path())?;
-    let mut stmt = conn.prepare(
-        "SELECT name, email, is_verified FROM contacts ORDER BY name COLLATE NOCASE ASC, email ASC",
-    )?;
+    // Nur Kontakte laden, die nicht versteckt sind
+    let mut stmt = conn.prepare("SELECT name, email, is_verified, pub_key FROM contacts WHERE is_hidden = 0 OR is_hidden IS NULL ORDER BY name COLLATE NOCASE ASC, email ASC")?;
     let contact_iter = stmt.query_map([], |row| {
         let name: Option<String> = row.get(0)?;
         let email: String = row.get(1)?;
         let is_verified: bool = row.get(2)?;
-        Ok((name.unwrap_or_default(), email, is_verified))
+        let pub_key: Option<String> = row.get(3)?;
+
+        // Prüfen, ob ein Key existiert und nicht leer ist
+        let has_pub_key = pub_key.is_some() && !pub_key.as_ref().unwrap().is_empty();
+
+        Ok((name.unwrap_or_default(), email, is_verified, has_pub_key))
     })?;
 
     let mut contacts = Vec::new();
@@ -60,19 +70,31 @@ pub fn get_all_contacts() -> Result<Vec<(String, String, bool)>> {
     Ok(contacts)
 }
 
-// NEU: Kontakt löschen
-pub fn delete_contact(email: &str) -> Result<()> {
+// Ersetzt delete_contact
+pub fn hide_contact(email: &str) -> Result<()> {
     let conn = Connection::open(db_path())?;
-    conn.execute("DELETE FROM contacts WHERE email = ?1", [email])?;
+    conn.execute(
+        "UPDATE contacts SET is_hidden = 1 WHERE email = ?1",
+        [email],
+    )?;
     Ok(())
 }
 
-// NEU: Kontakt verifizieren
 pub fn verify_contact(email: &str) -> Result<()> {
     let conn = Connection::open(db_path())?;
     conn.execute(
         "UPDATE contacts SET is_verified = 1 WHERE email = ?1",
         [email],
+    )?;
+    Ok(())
+}
+
+// NEU: Namen in der DB aktualisieren
+pub fn update_contact_name(email: &str, new_name: &str) -> Result<()> {
+    let conn = Connection::open(db_path())?;
+    conn.execute(
+        "UPDATE contacts SET name = ?1 WHERE email = ?2",
+        [new_name, email],
     )?;
     Ok(())
 }
