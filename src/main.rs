@@ -1,19 +1,19 @@
+use gtk4::gdk;
 use gtk4::prelude::*;
 use gtk4::{
     Application, ApplicationWindow, Button, HeaderBar, Label, ListBox, Orientation, Paned,
-    ScrolledWindow, SelectionMode, TextView, Spinner, SearchEntry, ToggleButton,
+    ScrolledWindow, SearchEntry, SelectionMode, Spinner, TextView, ToggleButton,
 };
+use mailparse::MailHeaderMap;
 use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use mailparse::MailHeaderMap;
-use gtk4::gdk;
 
+mod addressbook;
 mod composer;
 mod db;
-mod addressbook;
 
 const APP_ID: &str = "app.noxmail.Nox";
 
@@ -30,7 +30,11 @@ struct MailEntry {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum SortCol { Date, Sender, Subject }
+enum SortCol {
+    Date,
+    Sender,
+    Subject,
+}
 
 fn perform_search(entries: &[MailEntry], query: &str) -> Vec<MailEntry> {
     if query.trim().is_empty() {
@@ -46,6 +50,31 @@ fn perform_search(entries: &[MailEntry], query: &str) -> Vec<MailEntry> {
         })
         .cloned()
         .collect()
+}
+
+// NEU: Hilfsfunktion zum physischen Verschieben der Mails
+fn move_mail_file(old_path: &PathBuf, target_folder: &str) -> Option<PathBuf> {
+    let file_name = old_path.file_name()?;
+    let mail_dir = dirs::home_dir()?.join(".Mail");
+
+    // Behält "new" oder "cur" Status bei
+    let subfolder = if old_path.to_string_lossy().contains("/new/") {
+        "new"
+    } else {
+        "cur"
+    };
+    let target_dir = mail_dir.join(target_folder).join(subfolder);
+
+    if !target_dir.exists() {
+        let _ = fs::create_dir_all(&target_dir);
+    }
+
+    let new_path = target_dir.join(file_name);
+    if fs::rename(old_path, &new_path).is_ok() {
+        Some(new_path)
+    } else {
+        None
+    }
 }
 
 fn main() -> gtk4::glib::ExitCode {
@@ -85,7 +114,10 @@ fn build_ui(app: &Application) {
         let label = Label::builder()
             .label(folder)
             .halign(gtk4::Align::Start)
-            .margin_start(10).margin_end(10).margin_top(5).margin_bottom(5)
+            .margin_start(10)
+            .margin_end(10)
+            .margin_top(5)
+            .margin_bottom(5)
             .build();
         folder_list.append(&label);
     }
@@ -95,38 +127,77 @@ fn build_ui(app: &Application) {
         .hscrollbar_policy(gtk4::PolicyType::Never)
         .build();
 
-    let mail_list_vbox = gtk4::Box::builder().orientation(Orientation::Vertical).build();
+    let mail_list_vbox = gtk4::Box::builder()
+        .orientation(Orientation::Vertical)
+        .build();
     let header_box = gtk4::Box::builder()
         .orientation(Orientation::Horizontal)
         .spacing(10)
-        .margin_start(10).margin_end(10).margin_top(5).margin_bottom(5)
+        .margin_start(10)
+        .margin_end(10)
+        .margin_top(5)
+        .margin_bottom(5)
         .build();
 
-    let btn_sort_date = Button::builder().label("Datum").width_request(130).css_classes(["flat"]).build();
-    let btn_sort_sender = Button::builder().label("Absender").width_request(200).css_classes(["flat"]).build();
-    let btn_sort_subject = Button::builder().label("Betreff").hexpand(true).halign(gtk4::Align::Start).css_classes(["flat"]).build();
+    let btn_sort_date = Button::builder()
+        .label("Datum")
+        .width_request(130)
+        .css_classes(["flat"])
+        .build();
+    let btn_sort_sender = Button::builder()
+        .label("Absender")
+        .width_request(200)
+        .css_classes(["flat"])
+        .build();
+    let btn_sort_subject = Button::builder()
+        .label("Betreff")
+        .hexpand(true)
+        .halign(gtk4::Align::Start)
+        .css_classes(["flat"])
+        .build();
 
     header_box.append(&btn_sort_date);
     header_box.append(&btn_sort_sender);
     header_box.append(&btn_sort_subject);
 
-    let mail_list = ListBox::builder().selection_mode(SelectionMode::Single).build();
-    let mail_scroll = ScrolledWindow::builder().child(&mail_list).vexpand(true).build();
+    let mail_list = ListBox::builder()
+        .selection_mode(SelectionMode::Single)
+        .build();
+    let mail_scroll = ScrolledWindow::builder()
+        .child(&mail_list)
+        .vexpand(true)
+        .build();
 
     mail_list_vbox.append(&header_box);
     mail_list_vbox.append(&gtk4::Separator::new(Orientation::Horizontal));
     mail_list_vbox.append(&mail_scroll);
 
-    let viewer_vbox = gtk4::Box::builder().orientation(Orientation::Vertical).build();
+    let viewer_vbox = gtk4::Box::builder()
+        .orientation(Orientation::Vertical)
+        .build();
     let viewer_header_box = gtk4::Box::builder()
         .orientation(Orientation::Vertical)
         .spacing(4)
-        .margin_start(15).margin_end(15).margin_top(15).margin_bottom(15)
+        .margin_start(15)
+        .margin_end(15)
+        .margin_top(15)
+        .margin_bottom(15)
         .build();
 
-    let lbl_viewer_subj = Label::builder().halign(gtk4::Align::Start).use_markup(true).selectable(true).build();
-    let lbl_viewer_date = Label::builder().halign(gtk4::Align::Start).selectable(true).build();
-    let lbl_viewer_return = Label::builder().halign(gtk4::Align::Start).selectable(true).css_classes(["dim-label"]).build();
+    let lbl_viewer_subj = Label::builder()
+        .halign(gtk4::Align::Start)
+        .use_markup(true)
+        .selectable(true)
+        .build();
+    let lbl_viewer_date = Label::builder()
+        .halign(gtk4::Align::Start)
+        .selectable(true)
+        .build();
+    let lbl_viewer_return = Label::builder()
+        .halign(gtk4::Align::Start)
+        .selectable(true)
+        .css_classes(["dim-label"])
+        .build();
 
     viewer_header_box.append(&lbl_viewer_subj);
     viewer_header_box.append(&lbl_viewer_date);
@@ -138,10 +209,16 @@ fn build_ui(app: &Application) {
         .editable(false)
         .cursor_visible(false)
         .wrap_mode(gtk4::WrapMode::Word)
-        .left_margin(15).right_margin(15).top_margin(15).bottom_margin(15)
+        .left_margin(15)
+        .right_margin(15)
+        .top_margin(15)
+        .bottom_margin(15)
         .build();
 
-    let viewer_scroll = ScrolledWindow::builder().child(&mail_viewer).vexpand(true).build();
+    let viewer_scroll = ScrolledWindow::builder()
+        .child(&mail_viewer)
+        .vexpand(true)
+        .build();
 
     viewer_vbox.append(&viewer_header_box);
     viewer_vbox.append(&gtk4::Separator::new(Orientation::Horizontal));
@@ -177,19 +254,28 @@ fn build_ui(app: &Application) {
                 if desc { cmp.reverse() } else { cmp }
             });
 
-            while let Some(child) = list_box.first_child() { list_box.remove(&child); }
+            while let Some(child) = list_box.first_child() {
+                list_box.remove(&child);
+            }
 
             for entry in display_list.iter() {
                 let hbox = gtk4::Box::builder()
                     .orientation(Orientation::Horizontal)
                     .spacing(10)
-                    .margin_start(10).margin_end(10).margin_top(5).margin_bottom(5)
+                    .margin_start(10)
+                    .margin_end(10)
+                    .margin_top(5)
+                    .margin_bottom(5)
                     .build();
 
                 let (name, email) = crate::db::parse_from(&entry.from);
                 let display_from = if name.is_empty() { email } else { name };
 
-                let lbl_date = Label::builder().label(&entry.date_short).xalign(0.0).width_request(130).build();
+                let lbl_date = Label::builder()
+                    .label(&entry.date_short)
+                    .xalign(0.0)
+                    .width_request(130)
+                    .build();
                 let lbl_from = Label::builder()
                     .label(&display_from)
                     .xalign(0.0)
@@ -197,7 +283,12 @@ fn build_ui(app: &Application) {
                     .max_width_chars(25)
                     .ellipsize(gtk4::pango::EllipsizeMode::End)
                     .build();
-                let lbl_subj = Label::builder().label(&entry.subject).xalign(0.0).hexpand(true).ellipsize(gtk4::pango::EllipsizeMode::End).build();
+                let lbl_subj = Label::builder()
+                    .label(&entry.subject)
+                    .xalign(0.0)
+                    .hexpand(true)
+                    .ellipsize(gtk4::pango::EllipsizeMode::End)
+                    .build();
 
                 if !entry.is_read {
                     lbl_from.add_css_class("unread");
@@ -218,24 +309,42 @@ fn build_ui(app: &Application) {
     let st1 = sort_state.clone();
     btn_sort_date.connect_clicked(move |_| {
         let mut s = st1.borrow_mut();
-        if s.0 == SortCol::Date { s.1 = !s.1; } else { s.0 = SortCol::Date; s.1 = true; }
-        drop(s); r1();
+        if s.0 == SortCol::Date {
+            s.1 = !s.1;
+        } else {
+            s.0 = SortCol::Date;
+            s.1 = true;
+        }
+        drop(s);
+        r1();
     });
 
     let r2 = do_sort_and_render.clone();
     let st2 = sort_state.clone();
     btn_sort_sender.connect_clicked(move |_| {
         let mut s = st2.borrow_mut();
-        if s.0 == SortCol::Sender { s.1 = !s.1; } else { s.0 = SortCol::Sender; s.1 = false; }
-        drop(s); r2();
+        if s.0 == SortCol::Sender {
+            s.1 = !s.1;
+        } else {
+            s.0 = SortCol::Sender;
+            s.1 = false;
+        }
+        drop(s);
+        r2();
     });
 
     let r3 = do_sort_and_render.clone();
     let st3 = sort_state.clone();
     btn_sort_subject.connect_clicked(move |_| {
         let mut s = st3.borrow_mut();
-        if s.0 == SortCol::Subject { s.1 = !s.1; } else { s.0 = SortCol::Subject; s.1 = false; }
-        drop(s); r3();
+        if s.0 == SortCol::Subject {
+            s.1 = !s.1;
+        } else {
+            s.0 = SortCol::Subject;
+            s.1 = false;
+        }
+        drop(s);
+        r3();
     });
 
     let header_bar = HeaderBar::new();
@@ -257,10 +366,16 @@ fn build_ui(app: &Application) {
     let spinner = Spinner::builder().spinning(false).visible(false).build();
     header_bar.pack_end(&spinner);
 
-    let search_entry = SearchEntry::builder().visible(false).width_request(250).build();
+    let search_entry = SearchEntry::builder()
+        .visible(false)
+        .width_request(250)
+        .build();
     header_bar.pack_end(&search_entry);
 
-    let btn_search = ToggleButton::builder().icon_name("system-search-symbolic").tooltip_text("Suchen").build();
+    let btn_search = ToggleButton::builder()
+        .icon_name("system-search-symbolic")
+        .tooltip_text("Suchen")
+        .build();
     header_bar.pack_end(&btn_search);
 
     let btn_addressbook = Button::from_icon_name("avatar-default-symbolic");
@@ -277,7 +392,6 @@ fn build_ui(app: &Application) {
         }
     });
 
-    // NEU: ESC direkt im Suchfeld fangen
     let btn_search_stop = btn_search.clone();
     let mail_list_focus = mail_list.clone();
     search_entry.connect_stop_search(move |_| {
@@ -326,15 +440,31 @@ fn build_ui(app: &Application) {
             let (sender, receiver) = std::sync::mpsc::channel();
 
             std::thread::spawn(move || {
-                let maildir_path = if folder_name == "INBOX" && dirs::home_dir().unwrap().join(".Mail/cur").exists() {
+                let maildir_path = if folder_name == "INBOX"
+                    && dirs::home_dir().unwrap().join(".Mail/cur").exists()
+                {
                     dirs::home_dir().unwrap().join(".Mail")
                 } else {
-                    dirs::home_dir().unwrap().join(".Mail").join(folder_name)
+                    dirs::home_dir().unwrap().join(".Mail").join(&folder_name)
                 };
 
                 let md = maildir::Maildir::from(maildir_path);
                 let mut new_entries = Vec::new();
                 let mut db_contacts = std::collections::HashMap::new();
+
+                // Performance-Optimierung: Verifizierte Sender 1x laden statt pro Mail
+                let mut verified_senders = std::collections::HashSet::new();
+                if let Ok(conn) = rusqlite::Connection::open(db::db_path()) {
+                    if let Ok(mut stmt) =
+                        conn.prepare("SELECT email FROM contacts WHERE is_verified = 1")
+                    {
+                        if let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(0)) {
+                            for email in rows.flatten() {
+                                verified_senders.insert(email);
+                            }
+                        }
+                    }
+                }
 
                 for entry in md.list_new().chain(md.list_cur()) {
                     if let Ok(mail) = entry {
@@ -346,26 +476,60 @@ fn build_ui(app: &Application) {
                         if let Ok(data) = std::fs::read(&path) {
                             if let Ok(parsed) = mailparse::parse_mail(&data) {
                                 let headers = parsed.get_headers();
-                                let subject = headers.get_first_value("Subject").unwrap_or_else(|| "Kein Betreff".to_string());
-                                let from = headers.get_first_value("From").unwrap_or_else(|| "Unbekannt".to_string());
-                                let return_path = headers.get_first_value("Return-Path").unwrap_or_else(|| "".to_string());
+                                let subject = headers
+                                    .get_first_value("Subject")
+                                    .unwrap_or_else(|| "Kein Betreff".to_string());
+                                let from = headers
+                                    .get_first_value("From")
+                                    .unwrap_or_else(|| "Unbekannt".to_string());
+                                let return_path_raw = headers
+                                    .get_first_value("Return-Path")
+                                    .unwrap_or_else(|| "".to_string());
                                 let date_str = headers.get_first_value("Date").unwrap_or_default();
                                 let timestamp = mailparse::dateparse(&date_str).unwrap_or(0);
 
                                 let date_short = gtk4::glib::DateTime::from_unix_local(timestamp)
-                                    .map(|dt| dt.format("%d.%m.%y %H:%M").unwrap_or(date_str.clone().into()).to_string())
+                                    .map(|dt| {
+                                        dt.format("%d.%m.%y %H:%M")
+                                            .unwrap_or(date_str.clone().into())
+                                            .to_string()
+                                    })
                                     .unwrap_or_else(|_| date_str.clone());
 
                                 let (name, email) = db::parse_from(&from);
+
+                                let mut return_path_clean =
+                                    return_path_raw.replace(['<', '>'], "").trim().to_string();
+                                if return_path_clean.is_empty() {
+                                    return_path_clean = email.clone();
+                                }
+
+                                // Auto-Verschieben, wenn wir INBOX laden und Kontakt nicht verifiziert ist
+                                if folder_name == "INBOX"
+                                    && !verified_senders.contains(&return_path_clean)
+                                {
+                                    if move_mail_file(&path, "Quarantäne").is_some() {
+                                        continue; // Bricht ab, Mail kommt nicht ins GUI
+                                    }
+                                }
+
                                 if !email.is_empty() {
-                                    let entry = db_contacts.entry(email).or_insert_with(|| name.clone());
+                                    let entry =
+                                        db_contacts.entry(email).or_insert_with(|| name.clone());
                                     if entry.is_empty() && !name.is_empty() {
                                         *entry = name;
                                     }
                                 }
 
                                 new_entries.push(MailEntry {
-                                    path, timestamp, date_short, date_full: date_str, from, return_path, subject, is_read
+                                    path,
+                                    timestamp,
+                                    date_short,
+                                    date_full: date_str,
+                                    from,
+                                    return_path: return_path_clean,
+                                    subject,
+                                    is_read,
                                 });
                             }
                         }
@@ -397,9 +561,7 @@ fn build_ui(app: &Application) {
                         spinner_recv.set_visible(false);
                         gtk4::glib::ControlFlow::Break
                     }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => {
-                        gtk4::glib::ControlFlow::Continue
-                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => gtk4::glib::ControlFlow::Continue,
                 }
             });
         }
@@ -423,13 +585,19 @@ fn build_ui(app: &Application) {
             let mut file_path_to_read = None;
 
             if let Some(entry) = entries_clone2.borrow_mut().get_mut(idx) {
-                lbl_subj_clone.set_label(&format!("<b><span size='large'>{}</span></b>", gtk4::glib::markup_escape_text(&entry.subject)));
+                lbl_subj_clone.set_label(&format!(
+                    "<b><span size='large'>{}</span></b>",
+                    gtk4::glib::markup_escape_text(&entry.subject)
+                ));
                 lbl_date_clone.set_label(&entry.date_full);
                 lbl_return_clone.set_label(&format!("Return-Path: {}", entry.return_path));
 
                 *selected_mail_clone.borrow_mut() = Some(entry.clone());
 
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64;
                 let age_secs = now - entry.timestamp;
                 let required_age = 24 * 60 * 60;
 
@@ -439,7 +607,10 @@ fn build_ui(app: &Application) {
                 } else {
                     btn_reply_clone2.set_sensitive(false);
                     let hours_left = 24 - (age_secs / 3600);
-                    btn_reply_clone2.set_tooltip_text(Some(&format!("Antworten (erst in {}h möglich)", hours_left)));
+                    btn_reply_clone2.set_tooltip_text(Some(&format!(
+                        "Antworten (erst in {}h möglich)",
+                        hours_left
+                    )));
                 }
 
                 btn_archive_clone2.set_sensitive(true);
@@ -470,7 +641,11 @@ fn build_ui(app: &Application) {
                         } else {
                             entry.path = new_path.clone();
 
-                            if let Some(global_entry) = current_entries_for_read.borrow_mut().iter_mut().find(|e| e.path == old_path) {
+                            if let Some(global_entry) = current_entries_for_read
+                                .borrow_mut()
+                                .iter_mut()
+                                .find(|e| e.path == old_path)
+                            {
                                 global_entry.is_read = true;
                                 global_entry.path = new_path;
                             }
@@ -539,7 +714,6 @@ fn build_ui(app: &Application) {
         }
     });
 
-    // --- NEU: Archivieren-Logik (Panic-Fix) ---
     let do_archive = {
         let selected = selected_mail.clone();
         let all_entries = current_mail_entries.clone();
@@ -550,35 +724,27 @@ fn build_ui(app: &Application) {
         let btn_reply_state = btn_reply.clone();
 
         Rc::new(move || {
-            let entry_opt = selected.borrow().clone(); // Clone entkoppelt Borrow
+            let entry_opt = selected.borrow().clone();
 
             if let Some(entry) = entry_opt {
-                let archive_dir = dirs::home_dir().unwrap().join(".Mail").join("Archive").join("cur");
+                if let Some(new_path) = move_mail_file(&entry.path, "Archive") {
+                    let current_idx = list_box.selected_row().map(|r| r.index()).unwrap_or(-1);
 
-                if let Some(fname) = entry.path.file_name() {
-                    let new_path = archive_dir.join(fname);
+                    all_entries.borrow_mut().retain(|e| e.path != entry.path);
+                    render();
 
-                    if entry.path != new_path {
-                        if std::fs::rename(&entry.path, &new_path).is_ok() {
-                            let current_idx = list_box.selected_row().map(|r| r.index()).unwrap_or(-1);
-
-                            all_entries.borrow_mut().retain(|e| e.path != entry.path);
-                            render();
-
-                            if current_idx >= 0 {
-                                if let Some(next_row) = list_box.row_at_index(current_idx) {
-                                    list_box.select_row(Some(&next_row));
-                                    next_row.grab_focus();
-                                } else if let Some(prev_row) = list_box.row_at_index(current_idx - 1) {
-                                    list_box.select_row(Some(&prev_row));
-                                    prev_row.grab_focus();
-                                } else {
-                                    text_buf.set_text("");
-                                    *selected.borrow_mut() = None;
-                                    btn_archive_state.set_sensitive(false);
-                                    btn_reply_state.set_sensitive(false);
-                                }
-                            }
+                    if current_idx >= 0 {
+                        if let Some(next_row) = list_box.row_at_index(current_idx) {
+                            list_box.select_row(Some(&next_row));
+                            next_row.grab_focus();
+                        } else if let Some(prev_row) = list_box.row_at_index(current_idx - 1) {
+                            list_box.select_row(Some(&prev_row));
+                            prev_row.grab_focus();
+                        } else {
+                            text_buf.set_text("");
+                            *selected.borrow_mut() = None;
+                            btn_archive_state.set_sensitive(false);
+                            btn_reply_state.set_sensitive(false);
                         }
                     }
                 }
@@ -590,6 +756,47 @@ fn build_ui(app: &Application) {
     btn_archive.connect_clicked(move |_| {
         archive_click_clone();
     });
+
+    // NEU: Toggle Verify (Quarantäne oder INBOX)
+    let do_toggle_verify = {
+        let selected = selected_mail.clone();
+        let all_entries = current_mail_entries.clone();
+        let render = do_sort_and_render.clone();
+        let text_buf = text_buffer.clone();
+        let list_box = mail_list.clone();
+        let btn_archive_state = btn_archive.clone();
+        let btn_reply_state = btn_reply.clone();
+
+        Rc::new(move || {
+            let entry_opt = selected.borrow().clone();
+            if let Some(entry) = entry_opt {
+                if let Ok(new_status) = db::toggle_verify_contact(&entry.return_path) {
+                    let target_folder = if new_status { "INBOX" } else { "Quarantäne" };
+
+                    if let Some(_new_path) = move_mail_file(&entry.path, target_folder) {
+                        let current_idx = list_box.selected_row().map(|r| r.index()).unwrap_or(-1);
+                        all_entries.borrow_mut().retain(|e| e.path != entry.path);
+                        render();
+
+                        if current_idx >= 0 {
+                            if let Some(next_row) = list_box.row_at_index(current_idx) {
+                                list_box.select_row(Some(&next_row));
+                                next_row.grab_focus();
+                            } else if let Some(prev_row) = list_box.row_at_index(current_idx - 1) {
+                                list_box.select_row(Some(&prev_row));
+                                prev_row.grab_focus();
+                            } else {
+                                text_buf.set_text("");
+                                *selected.borrow_mut() = None;
+                                btn_archive_state.set_sensitive(false);
+                                btn_reply_state.set_sensitive(false);
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    };
 
     let right_pane = Paned::builder()
         .orientation(Orientation::Vertical)
@@ -616,7 +823,8 @@ fn build_ui(app: &Application) {
     let key_controller = gtk4::EventControllerKey::new();
     let list_nav = mail_list.clone();
     let archive_shortcut_clone = do_archive.clone();
-    let btn_search_shortcut = btn_search.clone(); // NEU für '/' und ESC Shortcut
+    let verify_shortcut_clone = do_toggle_verify.clone();
+    let btn_search_shortcut = btn_search.clone();
 
     key_controller.connect_key_pressed(move |_, keyval, _, _| {
         let current_idx = list_nav.selected_row().map(|r| r.index()).unwrap_or(-1);
@@ -641,13 +849,15 @@ fn build_ui(app: &Application) {
                 archive_shortcut_clone();
                 gtk4::glib::Propagation::Stop
             }
+            gdk::Key::v => {
+                verify_shortcut_clone();
+                gtk4::glib::Propagation::Stop
+            }
             gdk::Key::slash => {
-                // NEU: '/' öffnet die Suche
                 btn_search_shortcut.set_active(true);
                 gtk4::glib::Propagation::Stop
             }
             gdk::Key::Escape => {
-                // NEU: ESC schließt die Suche (auch wenn Fokus woanders liegt)
                 if btn_search_shortcut.is_active() {
                     btn_search_shortcut.set_active(false);
                     list_nav.grab_focus();
@@ -669,7 +879,7 @@ fn get_maildir_folders() -> Vec<String> {
     let mut folders = Vec::new();
     if let Some(mut path) = dirs::home_dir() {
         path.push(".Mail");
-        
+
         let archive_path = path.join("Archive");
         if !archive_path.exists() {
             let _ = fs::create_dir_all(archive_path.join("cur"));
@@ -677,12 +887,19 @@ fn get_maildir_folders() -> Vec<String> {
             let _ = fs::create_dir_all(archive_path.join("tmp"));
         }
 
-        // NEU: Outbox Ordner garantieren
         let outbox_path = path.join("Outbox");
         if !outbox_path.exists() {
             let _ = fs::create_dir_all(outbox_path.join("cur"));
             let _ = fs::create_dir_all(outbox_path.join("new"));
             let _ = fs::create_dir_all(outbox_path.join("tmp"));
+        }
+
+        // NEU: Quarantäne Ordner garantieren
+        let quarantine_path = path.join("Quarantäne");
+        if !quarantine_path.exists() {
+            let _ = fs::create_dir_all(quarantine_path.join("cur"));
+            let _ = fs::create_dir_all(quarantine_path.join("new"));
+            let _ = fs::create_dir_all(quarantine_path.join("tmp"));
         }
 
         if path.join("cur").exists() {
@@ -707,23 +924,43 @@ fn get_maildir_folders() -> Vec<String> {
 }
 
 fn extract_best_body(parsed: &mailparse::ParsedMail) -> String {
-    let content_type = parsed.get_headers().get_first_value("Content-Type").unwrap_or_default().to_lowercase();
+    let content_type = parsed
+        .get_headers()
+        .get_first_value("Content-Type")
+        .unwrap_or_default()
+        .to_lowercase();
     if parsed.subparts.is_empty() {
         let body = parsed.get_body().unwrap_or_default();
-        if content_type.contains("text/html") { return strip_html_tags(&body); }
+        if content_type.contains("text/html") {
+            return strip_html_tags(&body);
+        }
         return body;
     }
     for part in &parsed.subparts {
-        let ct = part.get_headers().get_first_value("Content-Type").unwrap_or_default().to_lowercase();
-        if ct.contains("text/plain") { return part.get_body().unwrap_or_default(); }
+        let ct = part
+            .get_headers()
+            .get_first_value("Content-Type")
+            .unwrap_or_default()
+            .to_lowercase();
+        if ct.contains("text/plain") {
+            return part.get_body().unwrap_or_default();
+        }
     }
     for part in &parsed.subparts {
-        let ct = part.get_headers().get_first_value("Content-Type").unwrap_or_default().to_lowercase();
-        if ct.contains("text/html") { return strip_html_tags(&part.get_body().unwrap_or_default()); }
+        let ct = part
+            .get_headers()
+            .get_first_value("Content-Type")
+            .unwrap_or_default()
+            .to_lowercase();
+        if ct.contains("text/html") {
+            return strip_html_tags(&part.get_body().unwrap_or_default());
+        }
     }
     for part in &parsed.subparts {
         let text = extract_best_body(part);
-        if !text.is_empty() { return text; }
+        if !text.is_empty() {
+            return text;
+        }
     }
     "Kein anzeigbarer Text gefunden.".to_string()
 }
@@ -769,5 +1006,12 @@ fn strip_html_tags(html: &str) -> String {
         }
     }
 
-    result.replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").replace("&quot;", "\"").trim().to_string()
+    result
+        .replace("&nbsp;", " ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .trim()
+        .to_string()
 }

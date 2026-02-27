@@ -31,7 +31,6 @@ pub fn open_addressbook_window(app: &Application) {
         .selection_mode(gtk4::SelectionMode::Single)
         .build();
 
-    // Wir nutzen einen Weak-Pointer für die Closure, um Speicherlecks (Rc Cycles) zu vermeiden
     type RenderFn = Rc<dyn Fn(Option<usize>)>;
     let render_list_rc: Rc<RefCell<Option<RenderFn>>> = Rc::new(RefCell::new(None));
     let render_list_weak = Rc::downgrade(&render_list_rc);
@@ -59,7 +58,6 @@ pub fn open_addressbook_window(app: &Application) {
                     .margin_bottom(5)
                     .build();
 
-                // Inline-Editier-Feld
                 if editing_idx.get() == Some(idx) {
                     let name_entry = Entry::builder()
                         .text(name)
@@ -138,7 +136,6 @@ pub fn open_addressbook_window(app: &Application) {
                 list_box.append(&row);
             }
 
-            // Fokus wiederherstellen
             if let Some(idx) = select_idx {
                 if let Some(row) = list_box.row_at_index(idx as i32) {
                     list_box.select_row(Some(&row));
@@ -165,7 +162,6 @@ pub fn open_addressbook_window(app: &Application) {
         .build();
     vbox.append(&scroll);
 
-    // Such-Filter Logik
     let list_box_filter = list_box.clone();
     let contacts_filter = contacts.clone();
     search_entry.connect_search_changed(move |entry| {
@@ -185,7 +181,6 @@ pub fn open_addressbook_window(app: &Application) {
         });
     });
 
-    // --- NEU: Expliziter Doppelklick-Handler statt row_activated ---
     let click_gesture = gtk4::GestureClick::new();
     click_gesture.set_button(gdk::BUTTON_PRIMARY);
     let app_click = app.clone();
@@ -199,7 +194,6 @@ pub fn open_addressbook_window(app: &Application) {
                 return;
             }
 
-            // Finde die Zeile unter dem Cursor
             if let Some(row) = list_click.row_at_y(y as i32) {
                 let idx = row.index() as usize;
                 if let Some((name, email, _, _)) = contacts_click.borrow().get(idx) {
@@ -232,7 +226,7 @@ pub fn open_addressbook_window(app: &Application) {
     let search_focus = search_entry.clone();
     let ed_idx_keys = editing_idx.clone();
     let app_keys = app.clone();
-    let win_close = window.clone(); // NEU: Fenster-Referenz für ESC
+    let win_close = window.clone();
 
     key_controller.connect_key_pressed(move |_, keyval, _, _| {
         let current_idx = list_nav.selected_row().map(|r| r.index()).unwrap_or(-1);
@@ -285,7 +279,6 @@ pub fn open_addressbook_window(app: &Application) {
                     let idx = current_idx as usize;
                     let email_opt = contacts_keys.borrow().get(idx).map(|c| c.1.clone());
                     if let Some(email) = email_opt {
-                        // Soft-Delete statt echtem Löschen
                         if db::hide_contact(&email).is_ok() {
                             contacts_keys.borrow_mut().remove(idx);
                             if let Some(render) = render_keys.borrow().as_ref() {
@@ -297,13 +290,14 @@ pub fn open_addressbook_window(app: &Application) {
                 gtk4::glib::Propagation::Stop
             }
             gdk::Key::v => {
+                // NEU: nutzt nun auch das toggle aus der DB!
                 if current_idx >= 0 {
                     let idx = current_idx as usize;
                     let email_opt = contacts_keys.borrow().get(idx).map(|c| c.1.clone());
                     if let Some(email) = email_opt {
-                        if db::verify_contact(&email).is_ok() {
+                        if let Ok(new_status) = db::toggle_verify_contact(&email) {
                             if let Some(contact) = contacts_keys.borrow_mut().get_mut(idx) {
-                                contact.2 = true;
+                                contact.2 = new_status;
                             }
                             if let Some(render) = render_keys.borrow().as_ref() {
                                 render(Some(idx));
@@ -332,7 +326,6 @@ pub fn open_addressbook_window(app: &Application) {
                     list_nav.grab_focus();
                     gtk4::glib::Propagation::Stop
                 } else {
-                    // NEU: Fenster schließen
                     win_close.close();
                     gtk4::glib::Propagation::Stop
                 }

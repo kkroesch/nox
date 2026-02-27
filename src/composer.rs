@@ -4,7 +4,12 @@ use gtk4::{
     TextView,
 };
 
-pub fn open_composer_window(app: &Application, to: Option<&str>, subject: Option<&str>, body: Option<&str>) {
+pub fn open_composer_window(
+    app: &Application,
+    to: Option<&str>,
+    subject: Option<&str>,
+    body: Option<&str>,
+) {
     let to_entry = Entry::builder().placeholder_text("Empfänger").build();
     if let Some(t) = to {
         to_entry.set_text(t);
@@ -60,7 +65,6 @@ pub fn open_composer_window(app: &Application, to: Option<&str>, subject: Option
         .child(&vbox)
         .build();
 
-    // Klone für den Button-Closure
     let win_clone = composer_window.clone();
     let to_entry_clone = to_entry.clone();
     let subject_entry_clone = subject_entry.clone();
@@ -79,7 +83,11 @@ pub fn open_composer_window(app: &Application, to: Option<&str>, subject: Option
             to, subj, body
         );
 
-        let outbox_dir = dirs::home_dir().unwrap().join(".Mail").join("Outbox").join("new");
+        let outbox_dir = dirs::home_dir()
+            .unwrap()
+            .join(".Mail")
+            .join("Outbox")
+            .join("new");
         if let Err(e) = std::fs::create_dir_all(&outbox_dir) {
             eprintln!("Fehler beim Erstellen des Outbox-Ordners: {}", e);
         } else {
