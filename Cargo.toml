@@ -1,0 +1,10 @@
+[package]
+name = "noxmail"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dirs = "6.0.0"
+gtk4 = "0.11.0"
+maildir = "0.6.4"
+mailparse = "0.16.1"
