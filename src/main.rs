@@ -14,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod addressbook;
 mod composer;
 mod db;
+mod status;
 
 const APP_ID: &str = "app.noxmail.Nox";
 
@@ -27,6 +28,7 @@ struct MailEntry {
     return_path: String,
     subject: String,
     is_read: bool,
+    list_unsubscribe: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -52,12 +54,10 @@ fn perform_search(entries: &[MailEntry], query: &str) -> Vec<MailEntry> {
         .collect()
 }
 
-// NEU: Hilfsfunktion zum physischen Verschieben der Mails
 fn move_mail_file(old_path: &PathBuf, target_folder: &str) -> Option<PathBuf> {
     let file_name = old_path.file_name()?;
     let mail_dir = dirs::home_dir()?.join(".Mail");
 
-    // Behält "new" oder "cur" Status bei
     let subfolder = if old_path.to_string_lossy().contains("/new/") {
         "new"
     } else {
@@ -203,6 +203,15 @@ fn build_ui(app: &Application) {
     viewer_header_box.append(&lbl_viewer_date);
     viewer_header_box.append(&lbl_viewer_return);
 
+    let btn_unsubscribe = Button::builder()
+        .label("Abmelden (Unsubscribe)")
+        .visible(false)
+        .margin_top(5)
+        .halign(gtk4::Align::Start)
+        .css_classes(["suggested-action"])
+        .build();
+    viewer_header_box.append(&btn_unsubscribe);
+
     let text_buffer = gtk4::TextBuffer::new(None);
     let mail_viewer = TextView::builder()
         .buffer(&text_buffer)
@@ -224,20 +233,22 @@ fn build_ui(app: &Application) {
     viewer_vbox.append(&gtk4::Separator::new(Orientation::Horizontal));
     viewer_vbox.append(&viewer_scroll);
 
-    // --- State ---
     let current_mail_entries = Rc::new(RefCell::new(Vec::<MailEntry>::new()));
     let displayed_mail_entries = Rc::new(RefCell::new(Vec::<MailEntry>::new()));
     let sort_state = Rc::new(RefCell::new((SortCol::Date, true)));
     let selected_mail = Rc::new(RefCell::new(None::<MailEntry>));
     let current_search_query = Rc::new(RefCell::new(String::new()));
 
-    // --- Helfer: Rendern ---
+    let (status_box, status_label) = status::build_status_bar();
+    let status_label_rc = Rc::new(status_label);
+
     let do_sort_and_render = {
         let list_box = mail_list.clone();
         let all_entries = current_mail_entries.clone();
         let disp_entries = displayed_mail_entries.clone();
         let state = sort_state.clone();
         let search_query = current_search_query.clone();
+        let status_lbl = status_label_rc.clone();
 
         Rc::new(move || {
             let query = search_query.borrow().clone();
@@ -302,6 +313,11 @@ fn build_ui(app: &Application) {
             }
 
             *disp_entries.borrow_mut() = display_list;
+
+            let all_ref = all_entries.borrow();
+            let total = all_ref.len();
+            let unread = all_ref.iter().filter(|e| !e.is_read).count();
+            status_lbl.set_label(&format!("{} Mails, {} ungelesen", total, unread));
         })
     };
 
@@ -411,7 +427,6 @@ fn build_ui(app: &Application) {
         addressbook::open_addressbook_window(&app_clone_ab);
     });
 
-    // --- EVENT: Klick auf einen Ordner ---
     let folders_clone = folders.clone();
     let entries_clone = current_mail_entries.clone();
     let render_clone = do_sort_and_render.clone();
@@ -450,9 +465,9 @@ fn build_ui(app: &Application) {
 
                 let md = maildir::Maildir::from(maildir_path);
                 let mut new_entries = Vec::new();
-                let mut db_contacts = std::collections::HashMap::new();
+                let mut db_contacts: std::collections::HashMap<String, (String, Option<String>)> =
+                    std::collections::HashMap::new();
 
-                // Performance-Optimierung: Verifizierte Sender 1x laden statt pro Mail
                 let mut verified_senders = std::collections::HashSet::new();
                 if let Ok(conn) = rusqlite::Connection::open(db::db_path()) {
                     if let Ok(mut stmt) =
@@ -488,6 +503,23 @@ fn build_ui(app: &Application) {
                                 let date_str = headers.get_first_value("Date").unwrap_or_default();
                                 let timestamp = mailparse::dateparse(&date_str).unwrap_or(0);
 
+                                let mut pub_key = None;
+                                if let Some(ac_val) = headers.get_first_value("Autocrypt") {
+                                    if let Some(idx) = ac_val.find("keydata=") {
+                                        pub_key = Some(ac_val[idx + 8..].trim().to_string());
+                                    }
+                                }
+
+                                let mut list_unsubscribe = None;
+                                if let Some(lu_val) = headers.get_first_value("List-Unsubscribe") {
+                                    if let Some(start) = lu_val.find('<') {
+                                        if let Some(end) = lu_val[start..].find('>') {
+                                            list_unsubscribe =
+                                                Some(lu_val[start + 1..start + end].to_string());
+                                        }
+                                    }
+                                }
+
                                 let date_short = gtk4::glib::DateTime::from_unix_local(timestamp)
                                     .map(|dt| {
                                         dt.format("%d.%m.%y %H:%M")
@@ -504,20 +536,23 @@ fn build_ui(app: &Application) {
                                     return_path_clean = email.clone();
                                 }
 
-                                // Auto-Verschieben, wenn wir INBOX laden und Kontakt nicht verifiziert ist
                                 if folder_name == "INBOX"
                                     && !verified_senders.contains(&return_path_clean)
                                 {
                                     if move_mail_file(&path, "Quarantäne").is_some() {
-                                        continue; // Bricht ab, Mail kommt nicht ins GUI
+                                        continue;
                                     }
                                 }
 
                                 if !email.is_empty() {
-                                    let entry =
-                                        db_contacts.entry(email).or_insert_with(|| name.clone());
-                                    if entry.is_empty() && !name.is_empty() {
-                                        *entry = name;
+                                    let entry = db_contacts
+                                        .entry(email)
+                                        .or_insert_with(|| (name.clone(), pub_key.clone()));
+                                    if entry.0.is_empty() && !name.is_empty() {
+                                        entry.0 = name;
+                                    }
+                                    if entry.1.is_none() && pub_key.is_some() {
+                                        entry.1 = pub_key;
                                     }
                                 }
 
@@ -530,6 +565,7 @@ fn build_ui(app: &Application) {
                                     return_path: return_path_clean,
                                     subject,
                                     is_read,
+                                    list_unsubscribe,
                                 });
                             }
                         }
@@ -576,8 +612,9 @@ fn build_ui(app: &Application) {
     let btn_reply_clone2 = btn_reply.clone();
     let btn_archive_clone2 = btn_archive.clone();
     let selected_mail_clone = selected_mail.clone();
+    let btn_unsubscribe_clone = btn_unsubscribe.clone();
+    let status_lbl_read = status_label_rc.clone();
 
-    // --- EVENT: Zeile ausgewählt ---
     mail_list.connect_row_selected(move |_, row_opt| {
         if let Some(row) = row_opt {
             let idx = row.index() as usize;
@@ -591,6 +628,12 @@ fn build_ui(app: &Application) {
                 ));
                 lbl_date_clone.set_label(&entry.date_full);
                 lbl_return_clone.set_label(&format!("Return-Path: {}", entry.return_path));
+
+                if entry.list_unsubscribe.is_some() {
+                    btn_unsubscribe_clone.set_visible(true);
+                } else {
+                    btn_unsubscribe_clone.set_visible(false);
+                }
 
                 *selected_mail_clone.borrow_mut() = Some(entry.clone());
 
@@ -649,6 +692,12 @@ fn build_ui(app: &Application) {
                                 global_entry.is_read = true;
                                 global_entry.path = new_path;
                             }
+
+                            let all_ref = current_entries_for_read.borrow();
+                            let total = all_ref.len();
+                            let unread = all_ref.iter().filter(|e| !e.is_read).count();
+                            status_lbl_read
+                                .set_label(&format!("{} Mails, {} ungelesen", total, unread));
                         }
                     }
 
@@ -680,6 +729,36 @@ fn build_ui(app: &Application) {
     let app_clone1 = app.clone();
     btn_new_mail.connect_clicked(move |_| {
         composer::open_composer_window(&app_clone1, None, None, None);
+    });
+
+    let selected_mail_for_unsub = selected_mail.clone();
+    let app_clone_unsub = app.clone();
+    btn_unsubscribe.connect_clicked(move |_| {
+        if let Some(ref mail) = *selected_mail_for_unsub.borrow() {
+            if let Some(ref link) = mail.list_unsubscribe {
+                if link.starts_with("mailto:") {
+                    let to_clean = link
+                        .trim_start_matches("mailto:")
+                        .split('?')
+                        .next()
+                        .unwrap_or("")
+                        .to_string();
+                    composer::open_composer_window(
+                        &app_clone_unsub,
+                        Some(&to_clean),
+                        Some("Unsubscribe"),
+                        None,
+                    );
+                } else if link.starts_with("http") {
+                    if let Err(e) = gtk4::gio::AppInfo::launch_default_for_uri(
+                        link,
+                        None::<&gtk4::gio::AppLaunchContext>,
+                    ) {
+                        eprintln!("Fehler beim Öffnen des Links: {}", e);
+                    }
+                }
+            }
+        }
     });
 
     let app_clone2 = app.clone();
@@ -757,7 +836,6 @@ fn build_ui(app: &Application) {
         archive_click_clone();
     });
 
-    // NEU: Toggle Verify (Quarantäne oder INBOX)
     let do_toggle_verify = {
         let selected = selected_mail.clone();
         let all_entries = current_mail_entries.clone();
@@ -811,13 +889,21 @@ fn build_ui(app: &Application) {
         .end_child(&right_pane)
         .build();
     main_pane.set_position(200);
+    main_pane.set_vexpand(true);
+
+    let root_vbox = gtk4::Box::builder()
+        .orientation(Orientation::Vertical)
+        .build();
+    root_vbox.append(&main_pane);
+    root_vbox.append(&gtk4::Separator::new(Orientation::Horizontal));
+    root_vbox.append(&status_box);
 
     let window = ApplicationWindow::builder()
         .application(app)
         .title("nox")
         .default_width(1200)
         .default_height(800)
-        .child(&main_pane)
+        .child(&root_vbox)
         .build();
 
     let key_controller = gtk4::EventControllerKey::new();
@@ -894,7 +980,6 @@ fn get_maildir_folders() -> Vec<String> {
             let _ = fs::create_dir_all(outbox_path.join("tmp"));
         }
 
-        // NEU: Quarantäne Ordner garantieren
         let quarantine_path = path.join("Quarantäne");
         if !quarantine_path.exists() {
             let _ = fs::create_dir_all(quarantine_path.join("cur"));

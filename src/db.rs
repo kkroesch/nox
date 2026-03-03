@@ -28,18 +28,22 @@ pub fn init_db() -> Result<()> {
     Ok(())
 }
 
-pub fn bulk_upsert(contacts: &HashMap<String, String>) -> Result<()> {
+pub fn bulk_upsert(
+    contacts: &std::collections::HashMap<String, (String, Option<String>)>,
+) -> Result<()> {
     let mut conn = Connection::open(db_path())?;
     let tx = conn.transaction()?;
 
     {
         let mut stmt = tx.prepare(
-            "INSERT INTO contacts (name, email) VALUES (?1, ?2)
-             ON CONFLICT(email) DO UPDATE SET name=excluded.name WHERE contacts.name = '' OR contacts.name IS NULL"
+            "INSERT INTO contacts (name, email, pub_key) VALUES (?1, ?2, ?3)
+             ON CONFLICT(email) DO UPDATE SET
+                name = CASE WHEN excluded.name != '' AND excluded.name IS NOT NULL THEN excluded.name ELSE contacts.name END,
+                pub_key = CASE WHEN excluded.pub_key IS NOT NULL THEN excluded.pub_key ELSE contacts.pub_key END"
         )?;
 
-        for (email, name) in contacts {
-            stmt.execute([name, email])?;
+        for (email, (name, pub_key)) in contacts {
+            stmt.execute(rusqlite::params![name, email, pub_key])?;
         }
     }
 
@@ -89,7 +93,7 @@ pub fn verify_contact(email: &str) -> Result<()> {
     Ok(())
 }
 
-// NEU: Status einzeln abfragen
+// Status einzeln abfragen
 pub fn is_contact_verified(email: &str) -> bool {
     let conn =
         Connection::open(db_path()).unwrap_or_else(|_| panic!("DB-Verbindung fehlgeschlagen"));
@@ -100,7 +104,7 @@ pub fn is_contact_verified(email: &str) -> bool {
         .unwrap_or(false)
 }
 
-// NEU: Toggle für den v-Shortcut in Hauptansicht und Adressbuch
+// Toggle für den v-Shortcut in Hauptansicht und Adressbuch
 pub fn toggle_verify_contact(email: &str) -> Result<bool> {
     let conn = Connection::open(db_path())?;
 
