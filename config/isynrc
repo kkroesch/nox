@@ -1,0 +1,19 @@
+MaildirStore local
+Path ~/.Mail/
+Inbox ~/.Mail/INBOX
+
+IMAPStore icloud
+Host imap.mail.me.com
+User kkroesch@me.com
+PassCmd "secret-tool lookup email kkroesch@me.com"
+TLSType IMAPS
+
+Channel icloud-channel
+Far :icloud:
+Near :local:
+Patterns INBOX
+Sync PullNew
+Create Near
+Expunge None
+SyncState *
+MaxMessages 100
