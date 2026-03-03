@@ -7,26 +7,18 @@ Designed for local Maildir setups and Linux power users.
 ## Features
 
 - **Maildir First:** Reads directly from `~/.Mail/`. No built-in IMAP/POP3 sync – use `mbsync` or `offlineimap`.
-    
 - **Vim-like Keybindings:** Navigate and manage emails without touching the mouse (`j`, `k`, `a`, `v`).
-    
 - **Quarantine System:** Emails from unknown senders are automatically moved to a `Quarantine` folder.
-    
 - **Contact Management:** SQLite-based address book (`~/.noxmail.db`) with automatic contact harvesting.
-    
 - **Plain Text Focus:** Strips HTML to read emails safely and quickly.
-    
 - **Outbox Spooling:** Writes outgoing mails to `~/.Mail/Outbox/new/` for external MTAs (like `msmtp`) to process.
     
 
 ## Prerequisites
 
 - Rust / Cargo
-    
 - Development libraries: GTK4 and SQLite (`gtk4-devel sqlite-devel` on Fedora, `gtk4 sqlite` on macOS via Homebrew)
-    
 - CLI tools for mail sync and routing: `isync` (provides `mbsync`) and `msmtp`
-    
 - A local Maildir setup at `~/.Mail/`
     
 
