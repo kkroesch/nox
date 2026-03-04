@@ -876,6 +876,137 @@ fn build_ui(app: &Application) {
         })
     };
 
+    // NEU: Interaktiver Move-Dialog
+    let do_move_interactive = {
+        let selected = selected_mail.clone();
+        let all_entries = current_mail_entries.clone();
+        let render = do_sort_and_render.clone();
+        let text_buf = text_buffer.clone();
+        let list_box = mail_list.clone();
+        let btn_archive_state = btn_archive.clone();
+        let btn_reply_state = btn_reply.clone();
+
+        Rc::new(move || {
+            let entry_opt = selected.borrow().clone();
+            if let (Some(entry), Some(row)) = (entry_opt, list_box.selected_row()) {
+                let popover = gtk4::Popover::builder()
+                    .position(gtk4::PositionType::Bottom)
+                    .build();
+                popover.set_parent(&row);
+
+                let folder_list = ListBox::builder()
+                    .selection_mode(SelectionMode::Single)
+                    .build();
+
+                let folders = get_maildir_folders();
+                for folder in &folders {
+                    let lbl = Label::builder()
+                        .label(folder)
+                        .margin_top(5)
+                        .margin_bottom(5)
+                        .margin_start(10)
+                        .margin_end(10)
+                        .halign(gtk4::Align::Start)
+                        .build();
+                    folder_list.append(&lbl);
+                }
+
+                let scroll = ScrolledWindow::builder()
+                    .child(&folder_list)
+                    .max_content_height(300)
+                    .propagate_natural_height(true)
+                    .hscrollbar_policy(gtk4::PolicyType::Never)
+                    .build();
+
+                popover.set_child(Some(&scroll));
+
+                let popover_rc = Rc::new(popover);
+                let p_clone1 = popover_rc.clone();
+                let list_box_focus = list_box.clone();
+
+                popover_rc.connect_closed(move |p| {
+                    p.unparent();
+                    list_box_focus.grab_focus();
+                });
+
+                // Auch hier Vim-Bindings für die Navigation im Popover
+                let key_ctrl = gtk4::EventControllerKey::new();
+                let fl_clone = folder_list.clone();
+                key_ctrl.connect_key_pressed(move |_, keyval, _, _| {
+                    let idx = fl_clone.selected_row().map(|r| r.index()).unwrap_or(-1);
+                    match keyval {
+                        gdk::Key::j => {
+                            if let Some(r) = fl_clone.row_at_index(idx + 1) {
+                                fl_clone.select_row(Some(&r));
+                                r.grab_focus();
+                            }
+                            gtk4::glib::Propagation::Stop
+                        }
+                        gdk::Key::k => {
+                            if idx > 0 {
+                                if let Some(r) = fl_clone.row_at_index(idx - 1) {
+                                    fl_clone.select_row(Some(&r));
+                                    r.grab_focus();
+                                }
+                            }
+                            gtk4::glib::Propagation::Stop
+                        }
+                        _ => gtk4::glib::Propagation::Proceed,
+                    }
+                });
+                folder_list.add_controller(key_ctrl);
+
+                let all_entries_c = all_entries.clone();
+                let render_c = render.clone();
+                let list_box_c = list_box.clone();
+                let text_buf_c = text_buf.clone();
+                let selected_c = selected.clone();
+                let btn_arc_c = btn_archive_state.clone();
+                let btn_rep_c = btn_reply_state.clone();
+
+                folder_list.connect_row_activated(move |_, f_row| {
+                    if let Some(child) = f_row.child() {
+                        if let Ok(lbl) = child.downcast::<Label>() {
+                            let target_folder = lbl.label().to_string();
+
+                            if let Some(_new_path) = move_mail_file(&entry.path, &target_folder) {
+                                let current_idx =
+                                    list_box_c.selected_row().map(|r| r.index()).unwrap_or(-1);
+                                all_entries_c.borrow_mut().retain(|e| e.path != entry.path);
+                                render_c();
+
+                                if current_idx >= 0 {
+                                    if let Some(next_row) = list_box_c.row_at_index(current_idx) {
+                                        list_box_c.select_row(Some(&next_row));
+                                        next_row.grab_focus();
+                                    } else if let Some(prev_row) =
+                                        list_box_c.row_at_index(current_idx - 1)
+                                    {
+                                        list_box_c.select_row(Some(&prev_row));
+                                        prev_row.grab_focus();
+                                    } else {
+                                        text_buf_c.set_text("");
+                                        *selected_c.borrow_mut() = None;
+                                        btn_arc_c.set_sensitive(false);
+                                        btn_rep_c.set_sensitive(false);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    p_clone1.popdown();
+                });
+
+                popover_rc.popup();
+                // Erstes Element fokussieren
+                if let Some(first_row) = folder_list.row_at_index(0) {
+                    folder_list.select_row(Some(&first_row));
+                    first_row.grab_focus();
+                }
+            }
+        })
+    };
+
     let right_pane = Paned::builder()
         .orientation(Orientation::Vertical)
         .start_child(&mail_list_vbox)
@@ -910,6 +1041,7 @@ fn build_ui(app: &Application) {
     let list_nav = mail_list.clone();
     let archive_shortcut_clone = do_archive.clone();
     let verify_shortcut_clone = do_toggle_verify.clone();
+    let move_interactive_shortcut_clone = do_move_interactive.clone(); // NEU
     let btn_search_shortcut = btn_search.clone();
 
     key_controller.connect_key_pressed(move |_, keyval, _, _| {
@@ -937,6 +1069,11 @@ fn build_ui(app: &Application) {
             }
             gdk::Key::v => {
                 verify_shortcut_clone();
+                gtk4::glib::Propagation::Stop
+            }
+            gdk::Key::m => {
+                // NEU: Shortcut m
+                move_interactive_shortcut_clone();
                 gtk4::glib::Propagation::Stop
             }
             gdk::Key::slash => {
