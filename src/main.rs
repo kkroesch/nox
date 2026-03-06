@@ -14,7 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod addressbook;
 mod composer;
 mod db;
-mod status;
+mod help;
+mod status; // NEU
 
 const APP_ID: &str = "app.noxmail.Nox";
 
@@ -88,6 +89,7 @@ fn main() -> gtk4::glib::ExitCode {
 }
 
 fn build_ui(app: &Application) {
+    gtk4::Window::set_default_icon_name("app.noxmail.Nox");
     let provider = gtk4::CssProvider::new();
     provider.load_from_data(".unread { font-weight: bold; }");
     gtk4::style_context_add_provider_for_display(
@@ -160,8 +162,9 @@ fn build_ui(app: &Application) {
     header_box.append(&btn_sort_sender);
     header_box.append(&btn_sort_subject);
 
+    // ÄNDERUNG: Multiple Selection aktivieren
     let mail_list = ListBox::builder()
-        .selection_mode(SelectionMode::Single)
+        .selection_mode(SelectionMode::Multiple)
         .build();
     let mail_scroll = ScrolledWindow::builder()
         .child(&mail_list)
@@ -394,6 +397,10 @@ fn build_ui(app: &Application) {
         .build();
     header_bar.pack_end(&btn_search);
 
+    let btn_help = Button::from_icon_name("help-about-symbolic"); // NEU
+    btn_help.set_tooltip_text(Some("Hilfe & Shortcuts (?)")); // NEU
+    header_bar.pack_end(&btn_help); // NEU
+
     let btn_addressbook = Button::from_icon_name("avatar-default-symbolic");
     btn_addressbook.set_tooltip_text(Some("Adressbuch"));
     header_bar.pack_end(&btn_addressbook);
@@ -425,6 +432,12 @@ fn build_ui(app: &Application) {
     let app_clone_ab = app.clone();
     btn_addressbook.connect_clicked(move |_| {
         addressbook::open_addressbook_window(&app_clone_ab);
+    });
+
+    // NEU: Hilfe Klick Event
+    let app_clone_help = app.clone();
+    btn_help.connect_clicked(move |_| {
+        help::show_help_window(&app_clone_help);
     });
 
     let folders_clone = folders.clone();
@@ -615,10 +628,12 @@ fn build_ui(app: &Application) {
     let btn_unsubscribe_clone = btn_unsubscribe.clone();
     let status_lbl_read = status_label_rc.clone();
 
-    mail_list.connect_row_selected(move |_, row_opt| {
-        if let Some(row) = row_opt {
-            let idx = row.index() as usize;
+    // ÄNDERUNG: Auf Änderung der Mehrfachauswahl reagieren statt nur auf Einzel-Klick
+    mail_list.connect_selected_rows_changed(move |list| {
+        let selected_rows = list.selected_rows();
 
+        if selected_rows.len() == 1 {
+            let idx = selected_rows[0].index() as usize;
             let mut file_path_to_read = None;
 
             if let Some(entry) = entries_clone2.borrow_mut().get_mut(idx) {
@@ -701,7 +716,7 @@ fn build_ui(app: &Application) {
                         }
                     }
 
-                    if let Some(child) = row.child() {
+                    if let Some(child) = selected_rows[0].child() {
                         if let Some(hbox) = child.downcast_ref::<gtk4::Box>() {
                             let mut curr = hbox.first_child();
                             while let Some(w) = curr {
@@ -723,6 +738,31 @@ fn build_ui(app: &Application) {
                     }
                 }
             }
+        } else if selected_rows.len() > 1 {
+            // Zeige Hinweis bei Mehrfachauswahl an
+            lbl_subj_clone.set_label(&format!(
+                "<b><span size='large'>{} Mails ausgewählt</span></b>",
+                selected_rows.len()
+            ));
+            lbl_date_clone.set_label("");
+            lbl_return_clone.set_label("");
+            text_buffer_clone2.set_text(
+                "Massenaktion (Archivieren, Löschen, Verschieben, Verifizieren) ist möglich.",
+            );
+            btn_unsubscribe_clone.set_visible(false);
+            btn_reply_clone2.set_sensitive(false);
+            btn_archive_clone2.set_sensitive(true);
+            *selected_mail_clone.borrow_mut() = None;
+        } else {
+            // Nichts ausgewählt
+            lbl_subj_clone.set_label("");
+            lbl_date_clone.set_label("");
+            lbl_return_clone.set_label("");
+            text_buffer_clone2.set_text("");
+            btn_unsubscribe_clone.set_visible(false);
+            btn_reply_clone2.set_sensitive(false);
+            btn_archive_clone2.set_sensitive(false);
+            *selected_mail_clone.borrow_mut() = None;
         }
     });
 
@@ -793,40 +833,44 @@ fn build_ui(app: &Application) {
         }
     });
 
+    // ÄNDERUNG: Schleifen über alle gewählten Reihen für die Aktionen
     let do_archive = {
-        let selected = selected_mail.clone();
+        let disp_entries = displayed_mail_entries.clone(); // NEU: Zugriff auf Anzeige-Liste nötig
         let all_entries = current_mail_entries.clone();
         let render = do_sort_and_render.clone();
         let text_buf = text_buffer.clone();
         let list_box = mail_list.clone();
         let btn_archive_state = btn_archive.clone();
         let btn_reply_state = btn_reply.clone();
+        let selected_mail_state = selected_mail.clone();
 
         Rc::new(move || {
-            let entry_opt = selected.borrow().clone();
+            let rows = list_box.selected_rows();
+            if rows.is_empty() {
+                return;
+            }
 
-            if let Some(entry) = entry_opt {
-                if let Some(new_path) = move_mail_file(&entry.path, "Archive") {
-                    let current_idx = list_box.selected_row().map(|r| r.index()).unwrap_or(-1);
+            let mut paths_to_remove = Vec::new();
+            let disp = disp_entries.borrow();
 
-                    all_entries.borrow_mut().retain(|e| e.path != entry.path);
-                    render();
-
-                    if current_idx >= 0 {
-                        if let Some(next_row) = list_box.row_at_index(current_idx) {
-                            list_box.select_row(Some(&next_row));
-                            next_row.grab_focus();
-                        } else if let Some(prev_row) = list_box.row_at_index(current_idx - 1) {
-                            list_box.select_row(Some(&prev_row));
-                            prev_row.grab_focus();
-                        } else {
-                            text_buf.set_text("");
-                            *selected.borrow_mut() = None;
-                            btn_archive_state.set_sensitive(false);
-                            btn_reply_state.set_sensitive(false);
-                        }
+            for row in &rows {
+                let idx = row.index() as usize;
+                if let Some(entry) = disp.get(idx) {
+                    if let Some(_new_path) = move_mail_file(&entry.path, "Archive") {
+                        paths_to_remove.push(entry.path.clone());
                     }
                 }
+            }
+
+            if !paths_to_remove.is_empty() {
+                all_entries
+                    .borrow_mut()
+                    .retain(|e| !paths_to_remove.contains(&e.path));
+                render();
+                text_buf.set_text("");
+                *selected_mail_state.borrow_mut() = None;
+                btn_archive_state.set_sensitive(false);
+                btn_reply_state.set_sensitive(false);
             }
         })
     };
@@ -836,173 +880,223 @@ fn build_ui(app: &Application) {
         archive_click_clone();
     });
 
-    let do_toggle_verify = {
-        let selected = selected_mail.clone();
+    let do_trash = {
+        let disp_entries = displayed_mail_entries.clone();
         let all_entries = current_mail_entries.clone();
         let render = do_sort_and_render.clone();
         let text_buf = text_buffer.clone();
         let list_box = mail_list.clone();
         let btn_archive_state = btn_archive.clone();
         let btn_reply_state = btn_reply.clone();
+        let selected_mail_state = selected_mail.clone();
 
         Rc::new(move || {
-            let entry_opt = selected.borrow().clone();
-            if let Some(entry) = entry_opt {
-                if let Ok(new_status) = db::toggle_verify_contact(&entry.return_path) {
-                    let target_folder = if new_status { "INBOX" } else { "Quarantäne" };
+            let rows = list_box.selected_rows();
+            if rows.is_empty() {
+                return;
+            }
 
-                    if let Some(_new_path) = move_mail_file(&entry.path, target_folder) {
-                        let current_idx = list_box.selected_row().map(|r| r.index()).unwrap_or(-1);
-                        all_entries.borrow_mut().retain(|e| e.path != entry.path);
-                        render();
+            let mut paths_to_remove = Vec::new();
+            let disp = disp_entries.borrow();
 
-                        if current_idx >= 0 {
-                            if let Some(next_row) = list_box.row_at_index(current_idx) {
-                                list_box.select_row(Some(&next_row));
-                                next_row.grab_focus();
-                            } else if let Some(prev_row) = list_box.row_at_index(current_idx - 1) {
-                                list_box.select_row(Some(&prev_row));
-                                prev_row.grab_focus();
-                            } else {
-                                text_buf.set_text("");
-                                *selected.borrow_mut() = None;
-                                btn_archive_state.set_sensitive(false);
-                                btn_reply_state.set_sensitive(false);
-                            }
-                        }
+            for row in &rows {
+                let idx = row.index() as usize;
+                if let Some(entry) = disp.get(idx) {
+                    if let Some(_new_path) = move_mail_file(&entry.path, "TRASH") {
+                        paths_to_remove.push(entry.path.clone());
                     }
                 }
+            }
+
+            if !paths_to_remove.is_empty() {
+                all_entries
+                    .borrow_mut()
+                    .retain(|e| !paths_to_remove.contains(&e.path));
+                render();
+                text_buf.set_text("");
+                *selected_mail_state.borrow_mut() = None;
+                btn_archive_state.set_sensitive(false);
+                btn_reply_state.set_sensitive(false);
             }
         })
     };
 
-    // NEU: Interaktiver Move-Dialog
-    let do_move_interactive = {
-        let selected = selected_mail.clone();
+    let do_toggle_verify = {
+        let disp_entries = displayed_mail_entries.clone();
         let all_entries = current_mail_entries.clone();
         let render = do_sort_and_render.clone();
         let text_buf = text_buffer.clone();
         let list_box = mail_list.clone();
         let btn_archive_state = btn_archive.clone();
         let btn_reply_state = btn_reply.clone();
+        let selected_mail_state = selected_mail.clone();
 
         Rc::new(move || {
-            let entry_opt = selected.borrow().clone();
-            if let (Some(entry), Some(row)) = (entry_opt, list_box.selected_row()) {
-                let popover = gtk4::Popover::builder()
-                    .position(gtk4::PositionType::Bottom)
-                    .build();
-                popover.set_parent(&row);
+            let rows = list_box.selected_rows();
+            if rows.is_empty() {
+                return;
+            }
 
-                let folder_list = ListBox::builder()
-                    .selection_mode(SelectionMode::Single)
-                    .build();
+            let mut paths_to_remove = Vec::new();
+            let disp = disp_entries.borrow();
 
-                let folders = get_maildir_folders();
-                for folder in &folders {
-                    let lbl = Label::builder()
-                        .label(folder)
-                        .margin_top(5)
-                        .margin_bottom(5)
-                        .margin_start(10)
-                        .margin_end(10)
-                        .halign(gtk4::Align::Start)
-                        .build();
-                    folder_list.append(&lbl);
+            for row in &rows {
+                let idx = row.index() as usize;
+                if let Some(entry) = disp.get(idx) {
+                    if let Ok(new_status) = db::toggle_verify_contact(&entry.return_path) {
+                        let target_folder = if new_status { "INBOX" } else { "Quarantäne" };
+                        if let Some(_new_path) = move_mail_file(&entry.path, target_folder) {
+                            paths_to_remove.push(entry.path.clone());
+                        }
+                    }
                 }
+            }
 
-                let scroll = ScrolledWindow::builder()
-                    .child(&folder_list)
-                    .max_content_height(300)
-                    .propagate_natural_height(true)
-                    .hscrollbar_policy(gtk4::PolicyType::Never)
+            if !paths_to_remove.is_empty() {
+                all_entries
+                    .borrow_mut()
+                    .retain(|e| !paths_to_remove.contains(&e.path));
+                render();
+                text_buf.set_text("");
+                *selected_mail_state.borrow_mut() = None;
+                btn_archive_state.set_sensitive(false);
+                btn_reply_state.set_sensitive(false);
+            }
+        })
+    };
+
+    let do_move_interactive = {
+        let disp_entries = displayed_mail_entries.clone();
+        let all_entries = current_mail_entries.clone();
+        let render = do_sort_and_render.clone();
+        let text_buf = text_buffer.clone();
+        let list_box = mail_list.clone();
+        let btn_archive_state = btn_archive.clone();
+        let btn_reply_state = btn_reply.clone();
+        let selected_mail_state = selected_mail.clone();
+
+        Rc::new(move || {
+            let rows = list_box.selected_rows();
+            if rows.is_empty() {
+                return;
+            }
+            let first_row = &rows[0]; // Das Popover wird am ersten selektierten Element verankert
+
+            let popover = gtk4::Popover::builder()
+                .position(gtk4::PositionType::Bottom)
+                .build();
+            popover.set_parent(first_row);
+
+            let folder_list = ListBox::builder()
+                .selection_mode(SelectionMode::Single)
+                .build();
+
+            let folders = get_maildir_folders();
+            for folder in &folders {
+                let lbl = Label::builder()
+                    .label(folder)
+                    .margin_top(5)
+                    .margin_bottom(5)
+                    .margin_start(10)
+                    .margin_end(10)
+                    .halign(gtk4::Align::Start)
                     .build();
+                folder_list.append(&lbl);
+            }
 
-                popover.set_child(Some(&scroll));
+            let scroll = ScrolledWindow::builder()
+                .child(&folder_list)
+                .max_content_height(300)
+                .propagate_natural_height(true)
+                .hscrollbar_policy(gtk4::PolicyType::Never)
+                .build();
 
-                let popover_rc = Rc::new(popover);
-                let p_clone1 = popover_rc.clone();
-                let list_box_focus = list_box.clone();
+            popover.set_child(Some(&scroll));
 
-                popover_rc.connect_closed(move |p| {
-                    p.unparent();
-                    list_box_focus.grab_focus();
-                });
+            let popover_rc = Rc::new(popover);
+            let p_clone1 = popover_rc.clone();
+            let list_box_focus = list_box.clone();
 
-                // Auch hier Vim-Bindings für die Navigation im Popover
-                let key_ctrl = gtk4::EventControllerKey::new();
-                let fl_clone = folder_list.clone();
-                key_ctrl.connect_key_pressed(move |_, keyval, _, _| {
-                    let idx = fl_clone.selected_row().map(|r| r.index()).unwrap_or(-1);
-                    match keyval {
-                        gdk::Key::j => {
-                            if let Some(r) = fl_clone.row_at_index(idx + 1) {
+            popover_rc.connect_closed(move |p| {
+                p.unparent();
+                list_box_focus.grab_focus();
+            });
+
+            let key_ctrl = gtk4::EventControllerKey::new();
+            let fl_clone = folder_list.clone();
+            key_ctrl.connect_key_pressed(move |_, keyval, _, _| {
+                let idx = fl_clone.selected_row().map(|r| r.index()).unwrap_or(-1);
+                match keyval {
+                    gdk::Key::j => {
+                        if let Some(r) = fl_clone.row_at_index(idx + 1) {
+                            fl_clone.select_row(Some(&r));
+                            r.grab_focus();
+                        }
+                        gtk4::glib::Propagation::Stop
+                    }
+                    gdk::Key::k => {
+                        if idx > 0 {
+                            if let Some(r) = fl_clone.row_at_index(idx - 1) {
                                 fl_clone.select_row(Some(&r));
                                 r.grab_focus();
                             }
-                            gtk4::glib::Propagation::Stop
                         }
-                        gdk::Key::k => {
-                            if idx > 0 {
-                                if let Some(r) = fl_clone.row_at_index(idx - 1) {
-                                    fl_clone.select_row(Some(&r));
-                                    r.grab_focus();
-                                }
-                            }
-                            gtk4::glib::Propagation::Stop
-                        }
-                        _ => gtk4::glib::Propagation::Proceed,
+                        gtk4::glib::Propagation::Stop
                     }
-                });
-                folder_list.add_controller(key_ctrl);
-
-                let all_entries_c = all_entries.clone();
-                let render_c = render.clone();
-                let list_box_c = list_box.clone();
-                let text_buf_c = text_buf.clone();
-                let selected_c = selected.clone();
-                let btn_arc_c = btn_archive_state.clone();
-                let btn_rep_c = btn_reply_state.clone();
-
-                folder_list.connect_row_activated(move |_, f_row| {
-                    if let Some(child) = f_row.child() {
-                        if let Ok(lbl) = child.downcast::<Label>() {
-                            let target_folder = lbl.label().to_string();
-
-                            if let Some(_new_path) = move_mail_file(&entry.path, &target_folder) {
-                                let current_idx =
-                                    list_box_c.selected_row().map(|r| r.index()).unwrap_or(-1);
-                                all_entries_c.borrow_mut().retain(|e| e.path != entry.path);
-                                render_c();
-
-                                if current_idx >= 0 {
-                                    if let Some(next_row) = list_box_c.row_at_index(current_idx) {
-                                        list_box_c.select_row(Some(&next_row));
-                                        next_row.grab_focus();
-                                    } else if let Some(prev_row) =
-                                        list_box_c.row_at_index(current_idx - 1)
-                                    {
-                                        list_box_c.select_row(Some(&prev_row));
-                                        prev_row.grab_focus();
-                                    } else {
-                                        text_buf_c.set_text("");
-                                        *selected_c.borrow_mut() = None;
-                                        btn_arc_c.set_sensitive(false);
-                                        btn_rep_c.set_sensitive(false);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    p_clone1.popdown();
-                });
-
-                popover_rc.popup();
-                // Erstes Element fokussieren
-                if let Some(first_row) = folder_list.row_at_index(0) {
-                    folder_list.select_row(Some(&first_row));
-                    first_row.grab_focus();
+                    _ => gtk4::glib::Propagation::Proceed,
                 }
+            });
+            folder_list.add_controller(key_ctrl);
+
+            // Sammle die Einträge für das spätere Verschieben
+            let mut entries_to_move = Vec::new();
+            let disp = disp_entries.borrow();
+            for r in &rows {
+                if let Some(entry) = disp.get(r.index() as usize) {
+                    entries_to_move.push(entry.clone());
+                }
+            }
+
+            let all_entries_c = all_entries.clone();
+            let render_c = render.clone();
+            let text_buf_c = text_buf.clone();
+            let btn_arc_c = btn_archive_state.clone();
+            let btn_rep_c = btn_reply_state.clone();
+            let sel_mail_c = selected_mail_state.clone();
+            let list_box_c = list_box.clone();
+
+            folder_list.connect_row_activated(move |_, f_row| {
+                if let Some(child) = f_row.child() {
+                    if let Ok(lbl) = child.downcast::<Label>() {
+                        let target_folder = lbl.label().to_string();
+                        let mut paths_to_remove = Vec::new();
+
+                        for entry in &entries_to_move {
+                            if let Some(_) = move_mail_file(&entry.path, &target_folder) {
+                                paths_to_remove.push(entry.path.clone());
+                            }
+                        }
+
+                        if !paths_to_remove.is_empty() {
+                            all_entries_c
+                                .borrow_mut()
+                                .retain(|e| !paths_to_remove.contains(&e.path));
+                            render_c();
+                            text_buf_c.set_text("");
+                            *sel_mail_c.borrow_mut() = None;
+                            btn_arc_c.set_sensitive(false);
+                            btn_rep_c.set_sensitive(false);
+                            list_box_c.grab_focus();
+                        }
+                    }
+                }
+                p_clone1.popdown();
+            });
+
+            popover_rc.popup();
+            if let Some(first_f_row) = folder_list.row_at_index(0) {
+                folder_list.select_row(Some(&first_f_row));
+                first_f_row.grab_focus();
             }
         })
     };
@@ -1041,11 +1135,31 @@ fn build_ui(app: &Application) {
     let list_nav = mail_list.clone();
     let archive_shortcut_clone = do_archive.clone();
     let verify_shortcut_clone = do_toggle_verify.clone();
-    let move_interactive_shortcut_clone = do_move_interactive.clone(); // NEU
+    let move_interactive_shortcut_clone = do_move_interactive.clone();
+    let trash_shortcut_clone = do_trash.clone();
     let btn_search_shortcut = btn_search.clone();
+    let app_clone_help_key = app.clone();
 
-    key_controller.connect_key_pressed(move |_, keyval, _, _| {
-        let current_idx = list_nav.selected_row().map(|r| r.index()).unwrap_or(-1);
+    // ÄNDERUNG: Ctrl+A / Shift usw. dürfen nicht von uns verschluckt werden
+    key_controller.connect_key_pressed(move |_, keyval, _, state| {
+        // Ignoriere unsere Einzel-Buchstaben-Shortcuts, falls Ctrl, Alt oder Super gedrückt ist (z.B. für Ctrl+A)
+        let mods = state.intersection(
+            gdk::ModifierType::CONTROL_MASK
+                | gdk::ModifierType::ALT_MASK
+                | gdk::ModifierType::SUPER_MASK
+                | gdk::ModifierType::META_MASK,
+        );
+        if !mods.is_empty() {
+            return gtk4::glib::Propagation::Proceed;
+        }
+
+        let selected = list_nav.selected_rows();
+        let current_idx = if !selected.is_empty() {
+            selected.last().unwrap().index()
+        } else {
+            -1
+        };
+
         match keyval {
             gdk::Key::j => {
                 if let Some(row) = list_nav.row_at_index(current_idx + 1) {
@@ -1067,6 +1181,11 @@ fn build_ui(app: &Application) {
                 archive_shortcut_clone();
                 gtk4::glib::Propagation::Stop
             }
+            gdk::Key::d => {
+                // NEU: Shortcut d für Trash
+                trash_shortcut_clone();
+                gtk4::glib::Propagation::Stop
+            }
             gdk::Key::v => {
                 verify_shortcut_clone();
                 gtk4::glib::Propagation::Stop
@@ -1078,6 +1197,11 @@ fn build_ui(app: &Application) {
             }
             gdk::Key::slash => {
                 btn_search_shortcut.set_active(true);
+                gtk4::glib::Propagation::Stop
+            }
+            gdk::Key::question => {
+                // NEU: Shortcut ? für Hilfe
+                help::show_help_window(&app_clone_help_key);
                 gtk4::glib::Propagation::Stop
             }
             gdk::Key::Escape => {
@@ -1122,6 +1246,14 @@ fn get_maildir_folders() -> Vec<String> {
             let _ = fs::create_dir_all(quarantine_path.join("cur"));
             let _ = fs::create_dir_all(quarantine_path.join("new"));
             let _ = fs::create_dir_all(quarantine_path.join("tmp"));
+        }
+
+        // NEU: TRASH Ordner garantieren
+        let trash_path = path.join("TRASH");
+        if !trash_path.exists() {
+            let _ = fs::create_dir_all(trash_path.join("cur"));
+            let _ = fs::create_dir_all(trash_path.join("new"));
+            let _ = fs::create_dir_all(trash_path.join("tmp"));
         }
 
         if path.join("cur").exists() {
