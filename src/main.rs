@@ -89,7 +89,6 @@ fn main() -> gtk4::glib::ExitCode {
 }
 
 fn build_ui(app: &Application) {
-    gtk4::Window::set_default_icon_name("app.noxmail.Nox");
     let provider = gtk4::CssProvider::new();
     provider.load_from_data(".unread { font-weight: bold; }");
     gtk4::style_context_add_provider_for_display(
@@ -162,10 +161,30 @@ fn build_ui(app: &Application) {
     header_box.append(&btn_sort_sender);
     header_box.append(&btn_sort_subject);
 
-    // ÄNDERUNG: Multiple Selection aktivieren
     let mail_list = ListBox::builder()
         .selection_mode(SelectionMode::Multiple)
         .build();
+
+    // NEU: Klick-Verhalten fixen (Nur bei STRG/SHIFT mehrfach markieren)
+    let click_gesture = gtk4::GestureClick::new();
+    click_gesture.set_button(gdk::BUTTON_PRIMARY);
+    let list_for_click = mail_list.clone();
+    click_gesture.connect_pressed(move |gesture, n_press, _x, _y| {
+        if n_press == 1 {
+            let state = gesture.current_event_state();
+            if !state.contains(gdk::ModifierType::CONTROL_MASK)
+                && !state.contains(gdk::ModifierType::SHIFT_MASK)
+            {
+                // Bei einem normalen Klick löschen wir vorher alle Markierungen.
+                // Das Markieren der exakt angeklickten Zeile macht GTK direkt im Anschluss selbst.
+                list_for_click.unselect_all();
+            }
+        }
+    });
+    // Wichtig: Wir müssen den Klick abfangen, BEVOR die ListBox ihn verarbeitet
+    click_gesture.set_propagation_phase(gtk4::PropagationPhase::Capture);
+    mail_list.add_controller(click_gesture);
+
     let mail_scroll = ScrolledWindow::builder()
         .child(&mail_list)
         .vexpand(true)
@@ -1163,6 +1182,7 @@ fn build_ui(app: &Application) {
         match keyval {
             gdk::Key::j => {
                 if let Some(row) = list_nav.row_at_index(current_idx + 1) {
+                    list_nav.unselect_all(); // NEU: Auswahl leeren
                     list_nav.select_row(Some(&row));
                     row.grab_focus();
                 }
@@ -1171,6 +1191,7 @@ fn build_ui(app: &Application) {
             gdk::Key::k => {
                 if current_idx > 0 {
                     if let Some(row) = list_nav.row_at_index(current_idx - 1) {
+                        list_nav.unselect_all(); // NEU: Auswahl leeren
                         list_nav.select_row(Some(&row));
                         row.grab_focus();
                     }

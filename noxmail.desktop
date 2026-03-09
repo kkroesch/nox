@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Noxmail
+Comment=Minimalistischer Maildir Client
+# Passe den Pfad zu deinem kompilierten Binary an
+Exec=/var/home/karsten/Projects/noxmail/target/release/noxmail
+Icon=app.noxmail.Nox
+Terminal=false
+Categories=Network;Email;
