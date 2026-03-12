@@ -82,27 +82,6 @@ pub fn hide_contact(email: &str) -> Result<()> {
     Ok(())
 }
 
-// Direkte Verifizierung (wird z.B. noch gebraucht, wenn man es hart setzen will)
-pub fn verify_contact(email: &str) -> Result<()> {
-    let conn = Connection::open(db_path())?;
-    conn.execute(
-        "UPDATE contacts SET is_verified = 1 WHERE email = ?1",
-        [email],
-    )?;
-    Ok(())
-}
-
-// Status einzeln abfragen
-pub fn is_contact_verified(email: &str) -> bool {
-    let conn =
-        Connection::open(db_path()).unwrap_or_else(|_| panic!("DB-Verbindung fehlgeschlagen"));
-    let mut stmt = conn
-        .prepare("SELECT is_verified FROM contacts WHERE email = ?1")
-        .unwrap();
-    stmt.query_row([email], |row| row.get::<_, bool>(0))
-        .unwrap_or(false)
-}
-
 // Toggle für den v-Shortcut in Hauptansicht und Adressbuch
 pub fn toggle_verify_contact(email: &str) -> Result<bool> {
     let conn = Connection::open(db_path())?;
