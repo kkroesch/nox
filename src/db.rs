@@ -1,5 +1,4 @@
 use rusqlite::{Connection, Result};
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 pub fn db_path() -> PathBuf {

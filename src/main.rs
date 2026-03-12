@@ -854,7 +854,7 @@ fn build_ui(app: &Application) {
 
     // ÄNDERUNG: Schleifen über alle gewählten Reihen für die Aktionen
     let do_archive = {
-        let disp_entries = displayed_mail_entries.clone(); // NEU: Zugriff auf Anzeige-Liste nötig
+        let disp_entries = displayed_mail_entries.clone();
         let all_entries = current_mail_entries.clone();
         let render = do_sort_and_render.clone();
         let text_buf = text_buffer.clone();
@@ -870,16 +870,19 @@ fn build_ui(app: &Application) {
             }
 
             let mut paths_to_remove = Vec::new();
-            let disp = disp_entries.borrow();
 
-            for row in &rows {
-                let idx = row.index() as usize;
-                if let Some(entry) = disp.get(idx) {
-                    if let Some(_new_path) = move_mail_file(&entry.path, "Archive") {
-                        paths_to_remove.push(entry.path.clone());
+            // FIX: Scope für immutable borrow
+            {
+                let disp = disp_entries.borrow();
+                for row in &rows {
+                    let idx = row.index() as usize;
+                    if let Some(entry) = disp.get(idx) {
+                        if let Some(_new_path) = move_mail_file(&entry.path, "Archive") {
+                            paths_to_remove.push(entry.path.clone());
+                        }
                     }
                 }
-            }
+            } // Hier wird 'disp' gedroppt!
 
             if !paths_to_remove.is_empty() {
                 all_entries
@@ -916,13 +919,16 @@ fn build_ui(app: &Application) {
             }
 
             let mut paths_to_remove = Vec::new();
-            let disp = disp_entries.borrow();
 
-            for row in &rows {
-                let idx = row.index() as usize;
-                if let Some(entry) = disp.get(idx) {
-                    if let Some(_new_path) = move_mail_file(&entry.path, "TRASH") {
-                        paths_to_remove.push(entry.path.clone());
+            // FIX: Scope für immutable borrow
+            {
+                let disp = disp_entries.borrow();
+                for row in &rows {
+                    let idx = row.index() as usize;
+                    if let Some(entry) = disp.get(idx) {
+                        if let Some(_new_path) = move_mail_file(&entry.path, "TRASH") {
+                            paths_to_remove.push(entry.path.clone());
+                        }
                     }
                 }
             }
@@ -957,15 +963,18 @@ fn build_ui(app: &Application) {
             }
 
             let mut paths_to_remove = Vec::new();
-            let disp = disp_entries.borrow();
 
-            for row in &rows {
-                let idx = row.index() as usize;
-                if let Some(entry) = disp.get(idx) {
-                    if let Ok(new_status) = db::toggle_verify_contact(&entry.return_path) {
-                        let target_folder = if new_status { "INBOX" } else { "Quarantäne" };
-                        if let Some(_new_path) = move_mail_file(&entry.path, target_folder) {
-                            paths_to_remove.push(entry.path.clone());
+            // FIX: Scope für immutable borrow
+            {
+                let disp = disp_entries.borrow();
+                for row in &rows {
+                    let idx = row.index() as usize;
+                    if let Some(entry) = disp.get(idx) {
+                        if let Ok(new_status) = db::toggle_verify_contact(&entry.return_path) {
+                            let target_folder = if new_status { "INBOX" } else { "Quarantäne" };
+                            if let Some(_new_path) = move_mail_file(&entry.path, target_folder) {
+                                paths_to_remove.push(entry.path.clone());
+                            }
                         }
                     }
                 }
@@ -999,7 +1008,7 @@ fn build_ui(app: &Application) {
             if rows.is_empty() {
                 return;
             }
-            let first_row = &rows[0]; // Das Popover wird am ersten selektierten Element verankert
+            let first_row = &rows[0];
 
             let popover = gtk4::Popover::builder()
                 .position(gtk4::PositionType::Bottom)
@@ -1067,12 +1076,15 @@ fn build_ui(app: &Application) {
             });
             folder_list.add_controller(key_ctrl);
 
-            // Sammle die Einträge für das spätere Verschieben
             let mut entries_to_move = Vec::new();
-            let disp = disp_entries.borrow();
-            for r in &rows {
-                if let Some(entry) = disp.get(r.index() as usize) {
-                    entries_to_move.push(entry.clone());
+
+            // FIX: Scope für immutable borrow
+            {
+                let disp = disp_entries.borrow();
+                for r in &rows {
+                    if let Some(entry) = disp.get(r.index() as usize) {
+                        entries_to_move.push(entry.clone());
+                    }
                 }
             }
 
